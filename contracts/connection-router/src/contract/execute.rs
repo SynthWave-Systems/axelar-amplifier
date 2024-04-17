@@ -1,6 +1,6 @@
 use std::vec;
 
-use axelar_wasm_std::msg_id::{self, MessageId, MessageIdFormat};
+use axelar_wasm_std::msg_id::{self, MessageIdFormat};
 use cosmwasm_std::{to_binary, Addr, DepsMut, MessageInfo, Response, StdResult, WasmMsg};
 use error_stack::{report, ResultExt};
 use itertools::Itertools;
@@ -144,9 +144,17 @@ where
         sender: &Addr,
         msgs: Vec<Message>,
     ) -> error_stack::Result<Vec<Message>, Error> {
+
+        let verify_msg_ids = |msgs: &Vec<Message>, expected_format| {
+            msgs.iter()
+                .map(|msg| msg_id::verify_msg_id(&msg.cc_id.id, expected_format))
+                .collect::<Result<Vec<()>, _>>().change_context(Error::InvalidMessageId)
+        };
+
         // if sender is the nexus gateway, we cannot validate the source chain
         // because the source chain is registered in the core nexus module
         if sender == self.config.nexus_gateway {
+            verify_msg_ids(&msgs, &MessageIdFormat::HexTxHashAndEventIndex)?;
             return Ok(msgs);
         }
 
@@ -164,10 +172,8 @@ where
             return Err(report!(Error::WrongSourceChain));
         }
 
-        for msg in &msgs {
-            msg_id::verify_msg_id(&msg.cc_id.id, &source_chain.msg_id_format)
-                .change_context(Error::InvalidMessageId)?;
-        }
+        verify_msg_ids(&msgs, &source_chain.msg_id_format)?;
+
 
         Ok(msgs)
     }
@@ -236,7 +242,7 @@ mod test {
     use crate::state::chain_endpoints;
     use crate::{
         contract::Contract,
-        state::{Config, MockStore, ID_SEPARATOR},
+        state::{Config, MockStore},
     };
 
     use super::{freeze_chain, unfreeze_chain};
@@ -245,10 +251,11 @@ mod test {
         let mut bytes = [0; 32];
         rand::thread_rng().fill_bytes(&mut bytes);
 
-        let id = HexTxHashAndEventIndex{
-            tx_hash : bytes,
-            event_index: rand::thread_rng().gen::<u32>()
-        }.to_string();
+        let id = HexTxHashAndEventIndex {
+            tx_hash: bytes,
+            event_index: rand::thread_rng().gen::<u32>(),
+        }
+        .to_string();
 
         let mut bytes = [0; 20];
         rand::thread_rng().fill_bytes(&mut bytes);
@@ -264,7 +271,7 @@ mod test {
         Message {
             cc_id: CrossChainId {
                 chain: source_chain,
-                id: id.parse().unwrap()
+                id: id.parse().unwrap(),
             },
             source_address,
             destination_chain,
@@ -429,6 +436,44 @@ mod test {
             .is_err_and(move |err| {
                 matches!(err.current_context(), Error::ChainFrozen { chain } if *chain == destination_chain)
             }));
+    }
+
+    #[test]
+    fn route_messages_with_invalid_message_id() {
+        let config = Config {
+            admin: Addr::unchecked("admin"),
+            governance: Addr::unchecked("governance"),
+            nexus_gateway: Addr::unchecked("nexus_gateway"),
+        };
+        let sender = Addr::unchecked("sender");
+        let source_chain: ChainName = "ethereum".parse().unwrap();
+        let destination_chain: ChainName = "bitcoin".parse().unwrap();
+
+        let mut store = MockStore::new();
+        store
+            .expect_load_config()
+            .returning(move || Ok(config.clone()));
+        let source_chain_endpoint = ChainEndpoint {
+            name: source_chain.clone(),
+            gateway: Gateway {
+                address: sender.clone(),
+            },
+            frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
+        };
+        store
+            .expect_load_chain_by_gateway()
+            .once()
+            .with(predicate::eq(sender.clone()))
+            .return_once(|_| Ok(Some(source_chain_endpoint)));
+
+        let contract = Contract::new(store);
+
+        let mut msg = rand_message(source_chain, destination_chain.clone());
+        msg.cc_id.id = "foobar".try_into().unwrap();
+        assert!(contract
+            .route_messages(sender, vec![msg])
+            .is_err_and(move |err| { matches!(err.current_context(), Error::InvalidMessageId) }));
     }
 
     #[test]
