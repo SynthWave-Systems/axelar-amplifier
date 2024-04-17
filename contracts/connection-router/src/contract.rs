@@ -55,10 +55,11 @@ pub fn execute(
         ExecuteMsg::RegisterChain {
             chain,
             gateway_address,
+            msg_id_format
         } => {
             execute::require_governance(&deps, info)?;
             let gateway_address = deps.api.addr_validate(&gateway_address)?;
-            execute::register_chain(deps, chain, gateway_address)
+            execute::register_chain(deps, chain, gateway_address, msg_id_format)
         }
         ExecuteMsg::UpgradeGateway {
             chain,
@@ -124,6 +125,7 @@ mod test {
 
     use super::*;
 
+    use axelar_wasm_std::msg_id::tx_hash_event_index::HexTxHashAndEventIndex;
     use connection_router_api::{
         error::Error, ChainName, CrossChainId, GatewayDirection, Message, CHAIN_NAME_DELIMITER,
     };
@@ -170,6 +172,7 @@ mod test {
             ExecuteMsg::RegisterChain {
                 chain: chain.chain_name.clone(),
                 gateway_address: chain.gateway.to_string().try_into().unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         )
         .unwrap();
@@ -185,7 +188,10 @@ mod test {
         let mut msgs = vec![];
         for x in 0..count {
             *nonce += 1;
-            let id = format!("tx_id:{}", nonce);
+            let id = HexTxHashAndEventIndex{
+                tx_hash: [*nonce as u8; 32],
+                event_index: 0,
+            }.to_string();
             msgs.push(Message {
                 cc_id: CrossChainId {
                     id: id.parse().unwrap(),
@@ -358,6 +364,7 @@ mod test {
             ExecuteMsg::RegisterChain {
                 chain: chain.chain_name.clone(),
                 gateway_address: chain.gateway.to_string().try_into().unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         )
         .unwrap_err();
@@ -370,6 +377,7 @@ mod test {
             ExecuteMsg::RegisterChain {
                 chain: chain.chain_name.clone(),
                 gateway_address: chain.gateway.to_string().try_into().unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         )
         .unwrap_err();
@@ -382,6 +390,7 @@ mod test {
             ExecuteMsg::RegisterChain {
                 chain: chain.chain_name.clone(),
                 gateway_address: chain.gateway.to_string().try_into().unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         );
         assert!(res.is_ok());
@@ -630,6 +639,7 @@ mod test {
                     .to_string()
                     .try_into()
                     .unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         )
         .unwrap_err();
@@ -646,6 +656,7 @@ mod test {
                     .to_string()
                     .try_into()
                     .unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         )
         .unwrap_err();
@@ -679,6 +690,7 @@ mod test {
             ExecuteMsg::RegisterChain {
                 chain: polygon.chain_name.clone(),
                 gateway_address: eth.gateway.to_string().try_into().unwrap(),
+                msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex
             },
         )
         .unwrap_err();

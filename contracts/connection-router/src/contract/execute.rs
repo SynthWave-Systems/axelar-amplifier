@@ -1,7 +1,8 @@
 use std::vec;
 
+use axelar_wasm_std::msg_id::{self, MessageId, MessageIdFormat};
 use cosmwasm_std::{to_binary, Addr, DepsMut, MessageInfo, Response, StdResult, WasmMsg};
-use error_stack::report;
+use error_stack::{report, ResultExt};
 use itertools::Itertools;
 
 use axelar_wasm_std::flagset::FlagSet;
@@ -15,7 +16,12 @@ use crate::state::{chain_endpoints, Store, CONFIG};
 
 use super::Contract;
 
-pub fn register_chain(deps: DepsMut, name: ChainName, gateway: Addr) -> Result<Response, Error> {
+pub fn register_chain(
+    deps: DepsMut,
+    name: ChainName,
+    gateway: Addr,
+    msg_id_format: MessageIdFormat,
+) -> Result<Response, Error> {
     if find_chain_for_gateway(&deps, &gateway)?.is_some() {
         return Err(Error::GatewayAlreadyRegistered);
     }
@@ -27,6 +33,7 @@ pub fn register_chain(deps: DepsMut, name: ChainName, gateway: Addr) -> Result<R
                 address: gateway.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format,
         }),
     })?;
     Ok(Response::new().add_event(ChainRegistered { name, gateway }.into()))
@@ -157,6 +164,11 @@ where
             return Err(report!(Error::WrongSourceChain));
         }
 
+        for msg in &msgs {
+            msg_id::verify_msg_id(&msg.cc_id.id, &source_chain.msg_id_format)
+                .change_context(Error::InvalidMessageId)?;
+        }
+
         Ok(msgs)
     }
 
@@ -207,6 +219,7 @@ where
 
 #[cfg(test)]
 mod test {
+    use axelar_wasm_std::msg_id::tx_hash_event_index::HexTxHashAndEventIndex;
     use cosmwasm_std::Addr;
     use mockall::predicate;
     use rand::{Rng, RngCore};
@@ -231,7 +244,11 @@ mod test {
     fn rand_message(source_chain: ChainName, destination_chain: ChainName) -> Message {
         let mut bytes = [0; 32];
         rand::thread_rng().fill_bytes(&mut bytes);
-        let tx_id = hex::encode(bytes);
+
+        let id = HexTxHashAndEventIndex{
+            tx_hash : bytes,
+            event_index: rand::thread_rng().gen::<u32>()
+        }.to_string();
 
         let mut bytes = [0; 20];
         rand::thread_rng().fill_bytes(&mut bytes);
@@ -247,14 +264,7 @@ mod test {
         Message {
             cc_id: CrossChainId {
                 chain: source_chain,
-                id: format!(
-                    "{}{}{}",
-                    tx_id,
-                    ID_SEPARATOR,
-                    rand::thread_rng().gen::<u32>()
-                )
-                .try_into()
-                .unwrap(),
+                id: id.parse().unwrap()
             },
             source_address,
             destination_chain,
@@ -314,6 +324,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::Incoming),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_gateway()
@@ -351,6 +362,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_gateway()
@@ -389,6 +401,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_gateway()
@@ -401,6 +414,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::Bidirectional),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_chain_name()
@@ -439,6 +453,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_gateway()
@@ -451,6 +466,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_chain_name()
@@ -463,6 +479,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_chain_name()
@@ -507,6 +524,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_chain_name()
@@ -519,6 +537,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_chain_name()
@@ -596,6 +615,7 @@ mod test {
                 address: sender.clone(),
             },
             frozen_status: FlagSet::from(GatewayDirection::None),
+            msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
         };
         store
             .expect_load_chain_by_gateway()
@@ -636,6 +656,7 @@ mod test {
                         address: Addr::unchecked("gateway"),
                     },
                     frozen_status: FlagSet::from(GatewayDirection::None),
+                    msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
                 },
             )
             .unwrap();
@@ -714,6 +735,7 @@ mod test {
                         address: Addr::unchecked("gateway"),
                     },
                     frozen_status: FlagSet::from(GatewayDirection::None),
+                    msg_id_format: axelar_wasm_std::msg_id::MessageIdFormat::HexTxHashAndEventIndex,
                 },
             )
             .unwrap();
